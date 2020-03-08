@@ -1,0 +1,120 @@
+---
+title: "Module_3_app1"
+author: "Priya Shaji"
+date: "3/2/2020"
+output: html_document
+runtime: shiny
+---
+
+> Question 1:
+As a researcher, you frequently compare mortality rates from particular causes across different States. You need a visualization that will let you see (for 2010 only) the crude mortality rate, across all States, from one cause (for example, Neoplasms, which are effectively cancers). Create a visualization that allows you to rank States by crude mortality for each cause of death.
+
+
+```{r}
+## Import necessary package
+
+library(dplyr)
+library(shiny)
+library(ggplot2)
+library(rsconnect)
+
+## Reading data
+
+## Skipping 879 rows, as it shows error as: duplicate 'row.names' are not allowed`
+
+data <- read.csv("https://raw.githubusercontent.com/Shetura36/Data-608/master/module%203/cleaned-cdc-mortality-1999-2010-2-ver2.csv",skip=879, nrows=49806,header=TRUE, sep=",", strip.white = TRUE, quote = "\"'")
+
+## Remove rows that do not have values for State attribute
+data <-data[!(data$State==''),]
+
+## Selecting complete cases only 
+
+data <- data[complete.cases(data), ]
+
+## Set column names
+
+colnames(data) <- c('Disease', 'State', 'Year', 'Deaths', 'Population', 'Crude.Rate')
+
+## Change data type for `Disease` and `Crude.Rate` attributes
+
+data$Disease <- as.character(data$Disease)
+data$Crude.Rate <- as.numeric(data$Crude.Rate)
+
+## Extract only disease categories from string
+
+data$Disease <- substr(data$Disease, regexpr('>', data$Disease)+1, nchar(data$Disease))
+
+## Subset for year 2010 only
+
+data_2010 <- data[data$Year == 2010, ]
+
+## Calculate national average of crude mortality rate
+
+avg_data <- data_2010 %>% group_by(Disease)  %>% summarise(total_population = sum(Population)) %>% inner_join(data_2010, by="Disease")
+avg_data$Weighted_CrudeRate <- (avg_data$Population/avg_data$total_population) * avg_data$Crude.Rate
+
+## Add disease_avg to data_2010
+
+data_2010 <- 
+  avg_data %>% group_by(Disease) %>% summarise(disease_avg = sum(Weighted_CrudeRate)) %>% inner_join(data_2010, by="Disease")
+
+## National average for each disease
+
+avg_2010 <- as.data.frame(unique(data_2010 %>% group_by(Disease) %>% select(Disease, disease_avg)))
+
+```
+
+
+
+```{r}
+
+## UI
+ui <- fluidPage(
+  sidebarLayout(
+    
+    # Input
+    sidebarPanel(
+      
+      # Select variable for y-axis
+      selectInput(inputId = "disease", 
+                  label = "Select disease:",
+                  choices = unique(data_2010$Disease),
+                  selected = "Neoplasms",
+                  width = '500px')
+      
+    ),
+    
+    # Output:
+    mainPanel(
+      plotOutput(outputId = "bargraph", width = "100%")
+    )
+  )
+)
+
+## Define server function required to create the scatterplot-
+server <- function(input, output, session) {
+  
+  #This is an event reactive element that responds to a specific event (in this case a button clicked)
+  #and sets the valueExpr to a specific value (in this case the plot title)
+  ordered <- eventReactive(
+    eventExpr = input$disease, 
+    valueExpr = {data_2010 %>% filter(Disease==input$disease) %>% arrange(desc(Crude.Rate))},
+    ignoreNULL = FALSE
+  )
+  
+  #Create bar graph
+  output$bargraph <- renderPlot({ggplot(data = ordered(), aes(x=reorder(State,Crude.Rate), y=Crude.Rate)) + 
+      geom_bar(stat="identity", width=0.7, color="#1F3552", fill="steelblue", 
+               position=position_dodge()) +
+      geom_text(aes(label=round(Crude.Rate, digits=2)), hjust=1.3, size=3.0, color="white") + 
+      coord_flip() + 
+      ggtitle("Crude Mortality for Selected Disease for 2010") +
+      xlab("") + ylab("") + 
+      theme_minimal()}, height = 1000, width = 600)
+}
+
+## Create a Shiny app object
+shinyApp(ui = ui, server = server)
+
+```
+
